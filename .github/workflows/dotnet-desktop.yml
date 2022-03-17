@@ -1,0 +1,75 @@
+name: .NET Core Desktop
+
+on:
+  push:
+    branches: master
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+
+  build:
+    runs-on: windows-latest  # For a list of available runner types, refer to
+                             # https://help.github.com/en/actions/reference/workflow-syntax-for-github-actions#jobsjob_idruns-on
+
+    env:
+      Solution_Name: Bacchus.sln                        
+      Test_Project_Path: your-test-project-path                 # Replace with the path to your test project, i.e. MyWpfApp.Tests\MyWpfApp.Tests.csproj.
+      Wap_Project_Directory: your-wap-project-directory-name    # Replace with the Wap project directory relative to the solution, i.e. MyWpfApp.Package.
+      Wap_Project_Path: your-wap-project-path                   # Replace with the path to your Wap project, i.e. MyWpf.App.Package\MyWpfApp.Package.wapproj.
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v2
+      with:
+        fetch-depth: 0
+
+    # Install the .NET Core workload
+    - name: Install .NET Core
+      uses: actions/setup-dotnet@v1
+      with:
+        dotnet-version: 5.0.x
+
+    # Add  MSBuild to the PATH: https://github.com/microsoft/setup-msbuild
+    - name: Setup MSBuild.exe
+      uses: microsoft/setup-msbuild@v1.0.2
+
+    # Execute all unit tests in the solution
+    - name: Execute unit tests
+      run: dotnet test
+
+    # Restore the application to populate the obj folder with RuntimeIdentifiers
+    - name: Restore the application
+      run: msbuild $env:Solution_Name /t:Restore /p:Configuration=$env:Configuration
+      env:
+        Configuration: ${{ matrix.configuration }}
+
+    # Upload the MSIX package: https://github.com/marketplace/actions/upload-a-build-artifact
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v3
+      with:
+        name: MSIX Package
+        path: ${{ env.Wap_Project_Directory }}\AppPackages
+        
+    - name: Download and set up sonar-scanner
+      env:
+        SONAR_SCANNER_DOWNLOAD_URL: https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/sonar-scanner-cli-${{ env.SONAR_SCANNER_VERSION }}-windows.zip
+        run: |
+          New-Item -Force -ItemType directory -Path $HOME\.sonar
+          curl -sSLo $HOME\.sonar\sonar-scanner.zip ${{ env.SONAR_SCANNER_DOWNLOAD_URL }}
+          unzip -o $HOME\.sonar\sonar-scanner.zip -d $HOME\.sonar\
+          echo "$HOME\.sonar\sonar-scanner-${{ env.SONAR_SCANNER_VERSION }}-windows\bin" | Out-File -Append -FilePath $env:GITHUB_PATH -Encoding utf8
+    - name: Download and set up build-wrapper
+      env:
+        BUILD_WRAPPER_DOWNLOAD_URL: ${{ env.SONAR_SERVER_URL }}/static/cpp/build-wrapper-win-x86.zip
+      run: |
+          curl -sSLo $HOME\.sonar\build-wrapper.zip ${{ env.BUILD_WRAPPER_DOWNLOAD_URL }}
+          unzip -o $HOME\.sonar\build-wrapper.zip -d $HOME\.sonar\
+          echo "$HOME\.sonar\build-wrapper-win-x86" | Out-File -Append -FilePath $env:GITHUB_PATH -Encoding utf8
+         
+    - name: Run sonar-scanner
+      env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      run: |
+          sonar-scanner --define sonar.host.url="${{ env.SONAR_SERVER_URL }}" --define sonar.cfamily.build-wrapper-output="${{ env.BUILD_WRAPPER_OUT_DIR }}"
